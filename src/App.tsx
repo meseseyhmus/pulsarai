@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useVoiceCommands } from './hooks/useVoiceCommands';
 import VoiceCommandHUD from './components/VoiceCommandHUD';
-import PulsarCore from './components/PulsarCore';
+import EvaViewer from './components/EvaViewer';
 import './App.css';
 
 // ── Types ────────────────────────────────────────────────────────
@@ -285,6 +285,9 @@ export default function App() {
 
   // ── Speaking state from voice hook ─────────────────────────────
   const isSpeaking = voice.status === 'speaking';
+  const latestJarvisMessage = useMemo(() => {
+    return messages.filter(m => m.sender === 'jarvis').pop()?.text;
+  }, [messages]);
 
   return (
     <div
@@ -357,11 +360,31 @@ export default function App() {
         </div>
       </header>
 
+      {/* FULLSCREEN EVA MODEL BACKGROUND */}
+      <div 
+        className="absolute inset-x-0 bottom-0 z-0 pointer-events-none" 
+        style={{ 
+          top: '80px', 
+          opacity: xaiOpen ? 0.4 : 0.85, 
+          transform: xaiOpen ? 'scale(0.55) translateY(-15%)' : 'scale(1) translateY(0)',
+          filter: xaiOpen ? 'blur(8px)' : 'blur(0px)',
+          transition: 'all 1.2s cubic-bezier(0.16, 1, 0.3, 1)',
+          transformOrigin: 'center center'
+        }}
+      >
+        <EvaViewer
+          status={gnssStatus}
+          isSpeaking={isSpeaking}
+          size="100%"
+          responseText={isSpeaking ? latestJarvisMessage : undefined}
+        />
+      </div>
+
       {/* ════ MAIN HUD ════ */}
-      <main className="flex-1 flex p-4 gap-4 relative z-10 overflow-hidden" role="main">
+      <main className="flex-1 flex p-4 gap-4 relative z-10 overflow-hidden pointer-events-none" role="main">
 
         {/* ── LEFT PANEL ── */}
-        <div className="w-[280px] flex flex-col gap-3 flex-shrink-0">
+        <div className="w-[280px] flex flex-col gap-3 flex-shrink-0 pointer-events-auto">
 
           {/* Core Diagnostics */}
           <div className="hud-panel p-4 flex-1 flex flex-col" role="region" aria-label="Sistem Diagnostik Paneli">
@@ -459,18 +482,11 @@ export default function App() {
           />
         </div>
 
-        {/* ── CENTER: PULSAR CORE ── */}
-        <div className="flex-1 flex flex-col items-center justify-center relative">
-
-          {/* PULSAR Core - Canvas-powered holographic reactor */}
-          <PulsarCore
-            status={gnssStatus}
-            isSpeaking={isSpeaking}
-            size={380}
-          />
+        {/* ── CENTER: EVA 3D MODEL ── */}
+        <div className="flex-1 flex flex-col items-center justify-center relative pointer-events-none">
 
           {/* ── Voice Terminal ── */}
-          <div className="mt-auto w-full max-w-2xl" style={{ background: 'var(--pulsar-bg-panel)', backdropFilter: 'blur(12px)', border: '1px solid var(--pulsar-border)', borderRadius: 4, padding: '14px 18px' }}>
+          <div className="mt-auto w-full max-w-2xl pointer-events-auto" style={{ background: 'var(--pulsar-bg-panel)', backdropFilter: 'blur(12px)', border: '1px solid var(--pulsar-border)', borderRadius: 4, padding: '14px 18px' }}>
 
             {/* Status indicator */}
             <div className="flex items-center justify-center gap-2 mb-3 h-5">
@@ -557,7 +573,7 @@ export default function App() {
         </div>
 
         {/* ── RIGHT PANEL ── */}
-        <div className="w-[280px] flex flex-col gap-3 flex-shrink-0">
+        <div className="w-[300px] flex flex-col gap-3 flex-shrink-0 pointer-events-auto">
 
           {/* GNSS Monitor */}
           <div
