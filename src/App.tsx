@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { useVoiceCommands } from './hooks/useVoiceCommands';
 import VoiceCommandHUD from './components/VoiceCommandHUD';
 import EvaViewer from './components/EvaViewer';
+import { askPulsarAI } from '@/lib/gemini';
 import './App.css';
 
 // ── Types ────────────────────────────────────────────────────────
@@ -31,17 +32,6 @@ interface AlarmRecord {
   xaiExplanation: string;
 }
 
-// ── Simulated AI responses ──────────────────────────────────────
-const jarvisResponses: Record<string, string> = {
-  default: "Sistem devrede. Yeni komutlarınızı bekliyorum efendim.",
-  merhaba: "Merhaba efendim. Sistemler tamamen çalışır durumda. Güven skoru stabil.",
-  durum: "Tüm çekirdek sistemleri optimal seviyede, efendim. Enerji protokolleri stabil.",
-  gnss: "GNSS sensörleri aktif. Sinyal anomalileri anlık analiz ediliyor.",
-  saldırı: "Güvenlik protokolü Delta devrede. Yetkisiz giriş girişimi engellenecektir.",
-  rapor: "Son 24 saatte 3 hafif ağ dalgalanması dışında sistemler kusursuz çalıştı.",
-  teşekkür: "Görevim, efendim.",
-  sistem: "Ana iletişim ve savunma sistemleri %100 kapasitede çalışıyor.",
-};
 
 // ── Component ───────────────────────────────────────────────────
 export default function App() {
@@ -161,6 +151,27 @@ export default function App() {
     URL.revokeObjectURL(url);
   }, [gnssStatus, trustScore, alarms, gnssLog, cpuUsage, memUsage, networkLatency]);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleVoiceEvent = useCallback((event: any) => {
+    if (event.type === 'no_speech' || !event.transcript) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      text: event.transcript,
+      sender: 'user',
+      timestamp: new Date(),
+    };
+
+    const jarvisMessage: Message = {
+      id: (Date.now() + 1).toString(),
+      text: event.response,
+      sender: 'jarvis',
+      timestamp: new Date(),
+    };
+
+    setMessages(prev => [...prev, userMessage, jarvisMessage]);
+  }, []);
+
   const voice = useVoiceCommands({
     onTriggerJammingTest: triggerJammingTest,
     onOpenXAIPanel: openXAIPanel,
@@ -168,6 +179,7 @@ export default function App() {
     getSystemStatus,
     getLastAlarm,
     getTrustScore,
+    onEventHandled: handleVoiceEvent,
   });
 
   // ── System stats simulation ───────────────────────────────────
@@ -235,20 +247,14 @@ export default function App() {
   }, [messages]);
 
   // ── Chat logic ────────────────────────────────────────────────
-  const getJarvisResponse = (userMessage: string): string => {
-    const lower = userMessage.toLowerCase();
-    for (const [key, response] of Object.entries(jarvisResponses)) {
-      if (lower.includes(key)) return response;
-    }
-    return jarvisResponses.default;
-  };
 
-  const sendMessage = useCallback(() => {
+  const sendMessage = useCallback(async () => {
     if (!inputValue.trim()) return;
 
+    const currentInput = inputValue.trim();
     const userMessage: Message = {
       id: Date.now().toString(),
-      text: inputValue.trim(),
+      text: currentInput,
       sender: 'user',
       timestamp: new Date(),
     };
@@ -256,19 +262,20 @@ export default function App() {
     setInputValue('');
     setIsThinking(true);
 
-    setTimeout(() => {
-      const responseText = getJarvisResponse(userMessage.text);
-      const jarvisMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: responseText,
-        sender: 'jarvis',
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, jarvisMessage]);
-      setIsThinking(false);
-      voice.speak(responseText);
-    }, 1200);
-  }, [inputValue, voice]);
+    const contextStr = `Sistem Güven Skoru: ${trustScore}, GNSS Durumu: ${gnssStatus}, Ağ Gecikmesi: ${networkLatency}ms`;
+    const responseText = await askPulsarAI(currentInput, contextStr);
+
+    const jarvisMessage: Message = {
+      id: (Date.now() + 1).toString(),
+      text: responseText,
+      sender: 'jarvis',
+      timestamp: new Date(),
+    };
+
+    setMessages(prev => [...prev, jarvisMessage]);
+    setIsThinking(false);
+    voice.speak(responseText);
+  }, [inputValue, voice, trustScore, gnssStatus, networkLatency]);
 
   // ── Derived ───────────────────────────────────────────────────
   const scoreColor = useMemo(() => {
@@ -361,11 +368,11 @@ export default function App() {
       </header>
 
       {/* FULLSCREEN EVA MODEL BACKGROUND */}
-      <div 
-        className="absolute inset-x-0 bottom-0 z-0 pointer-events-none" 
-        style={{ 
-          top: '80px', 
-          opacity: xaiOpen ? 0.4 : 0.85, 
+      <div
+        className="absolute inset-x-0 bottom-0 z-0 pointer-events-none"
+        style={{
+          top: '80px',
+          opacity: xaiOpen ? 0.4 : 0.85,
           transform: xaiOpen ? 'scale(0.55) translateY(-15%)' : 'scale(1) translateY(0)',
           filter: xaiOpen ? 'blur(8px)' : 'blur(0px)',
           transition: 'all 1.2s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -613,7 +620,9 @@ export default function App() {
                     boxShadow: `0 0 6px ${sat.color}`,
                     top: '50%', left: '50%',
                     marginTop: -3, marginLeft: -3,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     ['--orbit-radius' as any]: `${sat.radius}px`,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     ['--orbit-duration' as any]: `${sat.duration}s`,
                   }}
                 />

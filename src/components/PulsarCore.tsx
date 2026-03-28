@@ -77,6 +77,38 @@ function generateLightningArc(
   return points;
 }
 
+// ── Draw lightning helper ──────────────────────────────────────
+function drawLightning(ctx: CanvasRenderingContext2D, points: LightningPoint[], color: string, opacity: number) {
+  if (points.length < 2) return;
+
+  // Main bolt
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.globalAlpha = opacity;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  ctx.stroke();
+
+  // Bright core
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.strokeStyle = COLORS.white;
+  ctx.lineWidth = 0.5;
+  ctx.globalAlpha = opacity * 0.6;
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+}
+
 // ── Component ────────────────────────────────────────────────────
 export default function PulsarCore({ status, isSpeaking = false, size = 380 }: PulsarCoreProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -680,37 +712,6 @@ export default function PulsarCore({ status, isSpeaking = false, size = 380 }: P
     };
   }, [size, cx, cy, status, isSpeaking, getStatusColor, getStatusGlow, addRipple, spawnParticle]);
 
-  // ── Draw lightning helper ──────────────────────────────────────
-  function drawLightning(ctx: CanvasRenderingContext2D, points: LightningPoint[], color: string, opacity: number) {
-    if (points.length < 2) return;
-
-    // Main bolt
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      ctx.lineTo(points[i].x, points[i].y);
-    }
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.globalAlpha = opacity;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 12;
-    ctx.stroke();
-
-    // Bright core
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      ctx.lineTo(points[i].x, points[i].y);
-    }
-    ctx.strokeStyle = COLORS.white;
-    ctx.lineWidth = 0.5;
-    ctx.globalAlpha = opacity * 0.6;
-    ctx.stroke();
-
-    ctx.globalAlpha = 1;
-    ctx.shadowBlur = 0;
-  }
 
   return (
     <div

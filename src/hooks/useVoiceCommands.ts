@@ -1,4 +1,6 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { askPulsarAI } from '@/lib/gemini';
 
 export type VoiceStatus =
   | 'idle'
@@ -23,6 +25,7 @@ export interface UseVoiceCommandsOptions {
   getSystemStatus?: () => string;
   getLastAlarm?: () => string;
   getTrustScore?: () => number;
+  onEventHandled?: (event: VoiceCommandEvent) => void;
 }
 
 const WAKE_WORDS = ['pulsar', 'jarvis'];
@@ -92,7 +95,7 @@ function matchCommand(transcript: string): VoiceCommandEvent['type'] | null {
 }
 
 export function useVoiceCommands(options: UseVoiceCommandsOptions = {}) {
-  const { onTriggerJammingTest, onOpenXAIPanel, onDownloadEvidence, getSystemStatus, getLastAlarm, getTrustScore } = options;
+  const { onTriggerJammingTest, onOpenXAIPanel, onDownloadEvidence, getSystemStatus, getLastAlarm, getTrustScore, onEventHandled } = options;
 
   const [status, setStatus] = useState<VoiceStatus>('idle');
   const [lastEvent, setLastEvent] = useState<VoiceCommandEvent | null>(null);
@@ -106,6 +109,11 @@ export function useVoiceCommands(options: UseVoiceCommandsOptions = {}) {
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const wakeWordTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const continuousRef = useRef(false);
+  const onEventHandledRef = useRef(onEventHandled);
+
+  useEffect(() => {
+    onEventHandledRef.current = onEventHandled;
+  }, [onEventHandled]);
 
   // ── Init speech synthesis ──────────────────────────────────────────────────
   useEffect(() => {
@@ -163,7 +171,7 @@ export function useVoiceCommands(options: UseVoiceCommandsOptions = {}) {
 
   // ── Process command after wake word ──────────────────────────────────────
   const processCommand = useCallback(
-    (rawTranscript: string) => {
+    async (rawTranscript: string) => {
       setTranscript(rawTranscript);
       setStatus('processing');
 
@@ -246,11 +254,14 @@ export function useVoiceCommands(options: UseVoiceCommandsOptions = {}) {
           break;
 
         default:
-          response = RESPONSES.no_match;
+          response = await askPulsarAI(rawTranscript, `Sistem Güven Skoru: ${score}`);
           event = { type: 'unknown', transcript: rawTranscript, response };
       }
 
       setLastEvent(event);
+      if (onEventHandledRef.current) {
+        onEventHandledRef.current(event);
+      }
       setWakeWordDetected(false);
       speak(response);
     },
@@ -287,40 +298,33 @@ export function useVoiceCommands(options: UseVoiceCommandsOptions = {}) {
     rec.onstart = () => setStatus('listening');
 
     rec.onresult = (event: any) => {
-      const results = event.results;
-      const latest = results[results.length - 1];
-      const isFinal = latest.isFinal;
-      const text = Array.from(latest as any[])
-        .map((r: any) => r.transcript)
-        .join(' ')
-        .toLowerCase()
-        .trim();
-
+      let finalTranscript = '';
+      let interimTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        } else {
+          interimTranscript += event.results[i][0].transcript;
+        }
+      }
+      
+      const text = (finalTranscript || interimTranscript).toLowerCase().trim();
       setTranscript(text);
+
+      const isFinal = finalTranscript.length > 0;
 
       // Wake word check
       const hasWakeWord = WAKE_WORDS.some(w => text.includes(w));
 
-      if (hasWakeWord && !wakeWordDetected) {
+      if (hasWakeWord) {
         setWakeWordDetected(true);
         setStatus('wakeword_detected');
-        speak(RESPONSES.wakeword);
-
-        // 5-second window for actual command
-        if (wakeWordTimerRef.current) clearTimeout(wakeWordTimerRef.current);
-        wakeWordTimerRef.current = setTimeout(() => {
-          setWakeWordDetected(false);
-          setStatus('listening');
-        }, 5000);
       }
 
-      if (isFinal && wakeWordDetected) {
-        if (wakeWordTimerRef.current) clearTimeout(wakeWordTimerRef.current);
+      // If we have final speech, process it immediately (no wake word needed if they clicked the mic)
+      if (isFinal && text.length > 1) {
         processCommand(text);
-      }
-
-      // no-speech
-      if (isFinal && !hasWakeWord && !wakeWordDetected && text.length < 3) {
+      } else if (isFinal && text.length <= 1) {
         const noSpeechEvt: VoiceCommandEvent = {
           type: 'no_speech',
           transcript: text,
@@ -358,7 +362,7 @@ export function useVoiceCommands(options: UseVoiceCommandsOptions = {}) {
     } catch {
       setStatus('error');
     }
-  }, [buildRecognition, wakeWordDetected, processCommand, speak]);
+  }, [buildRecognition, processCommand, speak]);
 
   // ── Stop listening ────────────────────────────────────────────────────────
   const stopListening = useCallback(() => {

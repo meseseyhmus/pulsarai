@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/immutability, react-hooks/purity, @typescript-eslint/no-explicit-any */
 import { useRef, useEffect, Suspense, useMemo, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useGLTF, Environment, Float } from '@react-three/drei';
@@ -104,49 +105,18 @@ const energyFieldFragmentShader = `
   }
 `;
 
-// ── Component: Eva 3D Model ──────────────────────────────────────
-function EvaModel({
-  isSpeaking = false,
-  status = 'SECURE',
-}: {
-  isSpeaking: boolean;
-  status: 'SECURE' | 'WARNING' | 'ATTACK';
-}) {
-  const { scene } = useGLTF('/eva.glb');
-  const groupRef = useRef<THREE.Group>(null!);
+// ── Component: Eva AI Model (Using useFrame for animation) ─────────
+function EvaModel({ isSpeaking, status }: { isSpeaking: boolean; status: 'SECURE' | 'WARNING' | 'ATTACK' }) {
+  const { nodes, materials } = useGLTF('/eva.glb') as any;
+  const groupRef = useRef<THREE.Group>(null);
   const timeRef = useRef(0);
-
-  // Clone the scene
-  const clonedScene = useMemo(() => scene.clone(true), [scene]);
-
-  // Auto-normalize: compute bounding box, center + scale to fit
-  const { normalizedScene } = useMemo(() => {
-    const wrapper = new THREE.Group();
-    wrapper.add(clonedScene);
-
-    // Compute bounding box
-    const box = new THREE.Box3().setFromObject(wrapper);
-    const size = new THREE.Vector3();
-    const center = new THREE.Vector3();
-    box.getSize(size);
-    box.getCenter(center);
-
-    // Target size: fit within 1.2 units
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const targetSize = 1.2;
-    const scaleFactor = maxDim > 0.0001 ? targetSize / maxDim : 1;
-
-    // Apply: scale the scene and offset to center it
-    clonedScene.scale.multiplyScalar(scaleFactor);
-    clonedScene.position.sub(center.multiplyScalar(scaleFactor));
-
-    return {
-      normalizedScene: wrapper,
-    };
-  }, [clonedScene]);
-
-  // Store previous speaking state for smooth transitions
   const speakTransition = useRef(0);
+
+  // Safely clone root material once so we can manipulate emissives independently of the GLB cache
+  const clonedMat = useMemo(() => {
+    const rootMat = materials['Scene_-_Root'] as THREE.MeshStandardMaterial;
+    return rootMat ? rootMat.clone() : new THREE.MeshStandardMaterial();
+  }, [materials]);
 
   useFrame((_, delta) => {
     timeRef.current += delta;
@@ -162,20 +132,17 @@ function EvaModel({
     // ── Expressive Position ─────────────────────────────────────
     const floatY = Math.sin(t * 1.2) * 0.05 + Math.sin(t * 0.7) * 0.02;
     const speakFloatY = Math.sin(t * 8) * 0.04;
-    grp.position.y = floatY + (speakFloatY * sp);
+    grp.position.y = floatY + (speakFloatY * sp) - 0.6; // -0.6 for centering the Y offset of the nodes
 
     // ── Expressive Rotation ─────────────────────────────────────
-    // Attack wobble is chaotic
     const attackWobbleY = status === 'ATTACK' ? Math.sin(t * 20) * 0.1 : 0;
     const attackWobbleZ = status === 'ATTACK' ? Math.sin(t * 4) * 0.1 : 0;
     const attackWobbleX = status === 'ATTACK' ? Math.cos(t * 3) * 0.05 : 0;
 
-    // X, Y, Z head movements instead of basic spinning
-    const lookX = 0.05 + Math.sin(t * 5.0) * 0.05; // Lean forward and nod
-    const lookY = Math.sin(t * 3.5) * 0.25; // Look left and right
-    const lookZ = Math.sin(t * 4.2) * 0.06; // Tilt head
+    const lookX = 0.05 + Math.sin(t * 5.0) * 0.05; 
+    const lookY = Math.sin(t * 3.5) * 0.25; 
+    const lookZ = Math.sin(t * 4.2) * 0.06; 
 
-    // Apply rotation based on speech intensity
     grp.rotation.y = (lookY * sp) + attackWobbleY + (Math.sin(t * 0.8) * 0.15 * (1-sp));
     grp.rotation.x = (lookX * sp) + attackWobbleX + (Math.sin(t * 1.2) * 0.04 * (1-sp));
     grp.rotation.z = (lookZ * sp) + attackWobbleZ + (Math.cos(t * 0.6) * 0.02 * (1-sp));
@@ -184,8 +151,21 @@ function EvaModel({
     const idlePulse = 1 + Math.sin(t * 1.5) * 0.008;
     const speakPulse = Math.sin(t * 10) * 0.04 + Math.sin(t * 14) * 0.02;
     const attackPulse = status === 'ATTACK' ? Math.sin(t * 8) * 0.03 : 0;
-    const safeScale = Math.max(0.1, idlePulse + (speakPulse * sp) + attackPulse);
-    grp.scale.setScalar(safeScale);
+    const currentScale = Math.max(0.1, idlePulse + (speakPulse * sp) + attackPulse);
+    // Base scale is 0.45, apply dynamic pulse on top of it.
+    grp.scale.setScalar(0.45 * currentScale);
+
+    // ── Emissive glow ───────────────────────────────────────────
+    if (clonedMat) {
+      const targetEmissive = STATUS_EMISSIVE[status] || STATUS_EMISSIVE.SECURE;
+      const idleIntensity = 0.1 + Math.sin(t * 2) * 0.04;
+      const speakIntensity = 0.5 + Math.sin(t * 8) * 0.3 + Math.sin(t * 12) * 0.15;
+      const attackIntensity = status === 'ATTACK' ? 0.3 + Math.sin(t * 6) * 0.2 : 0;
+      const emissiveIntensity = idleIntensity + sp * (speakIntensity - idleIntensity) + attackIntensity;
+      
+      clonedMat.emissive.lerp(targetEmissive, 0.1);
+      clonedMat.emissiveIntensity = Math.max(0, emissiveIntensity);
+    }
   });
 
   return (
@@ -195,8 +175,15 @@ function EvaModel({
       floatIntensity={0.2}
       floatingRange={[-0.02, 0.02]}
     >
-      <group ref={groupRef}>
-        <primitive object={normalizedScene} />
+      <group ref={groupRef} position={[-0.2, -0.6, 0]}>
+        <group position={[0.743, 2.136, -0.239]} rotation={[0.058, 0.025, 0.009]}>
+          <mesh geometry={nodes.body__0?.geometry} material={clonedMat} />
+          <mesh geometry={nodes.body__0_1?.geometry} material={clonedMat} />
+        </group>
+        <mesh geometry={nodes.head_screen___0?.geometry} material={clonedMat} position={[0.566, 1.65, -0.324]} rotation={[0.231, 0.174, -0.153]} />
+        <mesh geometry={nodes.eyes__0?.geometry} material={clonedMat} position={[0.63, 2.47, 0.742]} rotation={[0.114, -0.198, -0.316]} />
+        <mesh geometry={nodes.head_white___0?.geometry} material={clonedMat} position={[0.581, 1.69, -0.292]} rotation={[0.243, 0.147, -0.155]} />
+        <mesh geometry={nodes.arm__0?.geometry} material={clonedMat} position={[-0.316, 1.092, -0.285]} rotation={[0.104, 0.083, -0.316]} />
       </group>
     </Float>
   );

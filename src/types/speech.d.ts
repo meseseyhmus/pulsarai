@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // Type definitions for Web Speech API
 
 interface SpeechRecognition extends EventTarget {

@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Volume2, VolumeX, Radio, Zap, ChevronDown, ChevronUp } from 'lucide-react';
 import type { VoiceStatus, VoiceCommandEvent } from '../hooks/useVoiceCommands';
