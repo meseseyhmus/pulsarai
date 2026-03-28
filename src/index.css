@@ -1,0 +1,167 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Courier+Prime:wght@400;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --pulsar-cyan: #00d4ff;
+    --pulsar-cyan-dim: rgba(0, 212, 255, 0.4);
+    --pulsar-cyan-ghost: rgba(0, 212, 255, 0.08);
+    --pulsar-red: #ff3333;
+    --pulsar-red-dim: rgba(255, 51, 51, 0.3);
+    --pulsar-green: #00cc66;
+    --pulsar-green-dim: rgba(0, 204, 102, 0.3);
+    --pulsar-amber: #f59e0b;
+    --pulsar-bg-deep: #000000;
+    --pulsar-bg-mid: #0a1628;
+    --pulsar-bg-panel: rgba(6, 14, 30, 0.75);
+    --pulsar-border: rgba(0, 212, 255, 0.15);
+    --pulsar-text: #c0e8ff;
+    --pulsar-text-dim: rgba(0, 212, 255, 0.45);
+
+    --background: 222.2 84% 4.9%;
+    --foreground: 195 100% 50%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 195 100% 50%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 195 100% 50%;
+    --primary: 195 100% 50%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 195 100% 50%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 195 100% 50%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 100% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 195 100% 50%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    user-select: none;
+    background: radial-gradient(ellipse at 50% 30%, var(--pulsar-bg-mid) 0%, var(--pulsar-bg-deep) 70%);
+    color: var(--pulsar-text);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* ── Typography ────────────────────────────────────────────────── */
+
+.font-heading {
+  font-family: 'Courier Prime', 'Courier New', monospace;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+
+.font-hud {
+  font-family: 'Orbitron', 'Inter', sans-serif;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.font-body {
+  font-family: 'Inter', system-ui, sans-serif;
+  letter-spacing: 0.5px;
+}
+
+.font-mono-data {
+  font-family: 'Courier Prime', 'Courier New', monospace;
+  letter-spacing: 1px;
+}
+
+/* ── Glows ─────────────────────────────────────────────────────── */
+
+.glow-cyan {
+  text-shadow:
+    0 0 4px rgba(0, 212, 255, 0.6),
+    0 0 12px rgba(0, 212, 255, 0.3),
+    0 0 30px rgba(0, 212, 255, 0.15);
+}
+
+.glow-red {
+  text-shadow:
+    0 0 4px rgba(255, 51, 51, 0.6),
+    0 0 12px rgba(255, 51, 51, 0.3),
+    0 0 30px rgba(255, 51, 51, 0.15);
+}
+
+.glow-green {
+  text-shadow:
+    0 0 4px rgba(0, 204, 102, 0.6),
+    0 0 12px rgba(0, 204, 102, 0.3),
+    0 0 30px rgba(0, 204, 102, 0.15);
+}
+
+.glow-amber {
+  text-shadow:
+    0 0 4px rgba(245, 158, 11, 0.6),
+    0 0 12px rgba(245, 158, 11, 0.3);
+}
+
+/* ── Box glows ─────────────────────────────────── */
+
+.box-glow-cyan {
+  box-shadow: 0 0 15px rgba(0, 212, 255, 0.15), inset 0 0 15px rgba(0, 212, 255, 0.03);
+}
+
+.box-glow-red {
+  box-shadow: 0 0 20px rgba(255, 51, 51, 0.2), inset 0 0 10px rgba(255, 51, 51, 0.05);
+}
+
+/* ── Utility animations ───────────────────────────────────────── */
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.5s ease-out;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.5s ease-out;
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── Custom scrollbar ─────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--pulsar-cyan-dim); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--pulsar-cyan); }
