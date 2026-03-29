@@ -5,11 +5,14 @@ import { useGLTF, Environment, Float } from '@react-three/drei';
 import * as THREE from 'three';
 
 // ── Types ────────────────────────────────────────────────────────
+type VoiceState = 'idle' | 'listening' | 'processing' | 'speaking';
+
 interface EvaViewerProps {
   isSpeaking?: boolean;
   status?: 'SECURE' | 'WARNING' | 'ATTACK';
   size?: number | string;
-  responseText?: string;
+  voiceState?: VoiceState;
+  micLevel?: number;
 }
 
 // ── Status color maps ────────────────────────────────────────────
@@ -106,11 +109,16 @@ const energyFieldFragmentShader = `
 `;
 
 // ── Component: Eva AI Model (Using useFrame for animation) ─────────
-function EvaModel({ isSpeaking, status }: { isSpeaking: boolean; status: 'SECURE' | 'WARNING' | 'ATTACK' }) {
+function EvaModel({ status, voiceState }: {
+  status: 'SECURE' | 'WARNING' | 'ATTACK';
+  voiceState: VoiceState;
+}) {
   const { nodes, materials } = useGLTF('/eva.glb') as any;
   const groupRef = useRef<THREE.Group>(null);
   const timeRef = useRef(0);
   const speakTransition = useRef(0);
+  const listenTransition = useRef(0);
+  const processTransition = useRef(0);
 
   // Safely clone root material once so we can manipulate emissives independently of the GLB cache
   const clonedMat = useMemo(() => {
@@ -124,46 +132,73 @@ function EvaModel({ isSpeaking, status }: { isSpeaking: boolean; status: 'SECURE
     const grp = groupRef.current;
     if (!grp) return;
 
-    // Smooth speaking transition
-    const speakTarget = isSpeaking ? 1 : 0;
+    // Smooth state transitions
+    const speakTarget = voiceState === 'speaking' ? 1 : 0;
+    const listenTarget = voiceState === 'listening' ? 1 : 0;
+    const processTarget = voiceState === 'processing' ? 1 : 0;
     speakTransition.current += (speakTarget - speakTransition.current) * delta * 4;
-    const sp = Math.max(0, Math.min(1, speakTransition.current)); // safely clamp
+    listenTransition.current += (listenTarget - listenTransition.current) * delta * 4;
+    processTransition.current += (processTarget - processTransition.current) * delta * 4;
+    const sp = Math.max(0, Math.min(1, speakTransition.current));
+    const lt = Math.max(0, Math.min(1, listenTransition.current));
+    const pt = Math.max(0, Math.min(1, processTransition.current));
 
     // ── Expressive Position ─────────────────────────────────────
     const floatY = Math.sin(t * 1.2) * 0.05 + Math.sin(t * 0.7) * 0.02;
     const speakFloatY = Math.sin(t * 8) * 0.04;
-    grp.position.y = floatY + (speakFloatY * sp) - 0.6; // -0.6 for centering the Y offset of the nodes
+    const listenFloatY = Math.sin(t * 2) * 0.01; // subtler when listening
+    grp.position.y = floatY + (speakFloatY * sp) + (listenFloatY * lt) - 0.6;
 
     // ── Expressive Rotation ─────────────────────────────────────
     const attackWobbleY = status === 'ATTACK' ? Math.sin(t * 20) * 0.1 : 0;
     const attackWobbleZ = status === 'ATTACK' ? Math.sin(t * 4) * 0.1 : 0;
     const attackWobbleX = status === 'ATTACK' ? Math.cos(t * 3) * 0.05 : 0;
 
-    const lookX = 0.05 + Math.sin(t * 5.0) * 0.05; 
-    const lookY = Math.sin(t * 3.5) * 0.25; 
-    const lookZ = Math.sin(t * 4.2) * 0.06; 
+    const lookX = 0.05 + Math.sin(t * 5.0) * 0.05;
+    const lookY = Math.sin(t * 3.5) * 0.25;
+    const lookZ = Math.sin(t * 4.2) * 0.06;
 
-    grp.rotation.y = (lookY * sp) + attackWobbleY + (Math.sin(t * 0.8) * 0.15 * (1-sp));
-    grp.rotation.x = (lookX * sp) + attackWobbleX + (Math.sin(t * 1.2) * 0.04 * (1-sp));
-    grp.rotation.z = (lookZ * sp) + attackWobbleZ + (Math.cos(t * 0.6) * 0.02 * (1-sp));
+    // Processing: rapid subtle head jitter (thinking)
+    const processJitterY = Math.sin(t * 18) * 0.03 * pt;
+    const processJitterX = Math.cos(t * 22) * 0.02 * pt;
+
+    // Listening: head leans slightly forward and tilts attentively
+    const listenX = 0.15 * lt;  // lean forward
+    const listenY = -0.08 * lt; // slight left tilt (attentive pose)
+
+    grp.rotation.y = (lookY * sp) + attackWobbleY + (Math.sin(t * 0.8) * 0.15 * (1-sp-lt)) + listenY + processJitterY;
+    grp.rotation.x = (lookX * sp) + attackWobbleX + (Math.sin(t * 1.2) * 0.04 * (1-sp-lt)) + listenX + processJitterX;
+    grp.rotation.z = (lookZ * sp) + attackWobbleZ + (Math.cos(t * 0.6) * 0.02 * (1-sp-lt));
 
     // ── Scale pulse ─────────────────────────────────────────────
     const idlePulse = 1 + Math.sin(t * 1.5) * 0.008;
     const speakPulse = Math.sin(t * 10) * 0.04 + Math.sin(t * 14) * 0.02;
     const attackPulse = status === 'ATTACK' ? Math.sin(t * 8) * 0.03 : 0;
-    const currentScale = Math.max(0.1, idlePulse + (speakPulse * sp) + attackPulse);
-    // Base scale is 0.45, apply dynamic pulse on top of it.
+    const processPulse = Math.sin(t * 20) * 0.015 * pt;
+    const currentScale = Math.max(0.1, idlePulse + (speakPulse * sp) + attackPulse + processPulse);
     grp.scale.setScalar(0.45 * currentScale);
 
     // ── Emissive glow ───────────────────────────────────────────
     if (clonedMat) {
       const targetEmissive = STATUS_EMISSIVE[status] || STATUS_EMISSIVE.SECURE;
+      const listenEmissive = new THREE.Color(0x0066ff); // warm blue for listening
+      const processEmissive = new THREE.Color(0xF59E0B); // amber for processing
+
       const idleIntensity = 0.1 + Math.sin(t * 2) * 0.04;
       const speakIntensity = 0.5 + Math.sin(t * 8) * 0.3 + Math.sin(t * 12) * 0.15;
+      const listenIntensity = 0.25 + Math.sin(t * 3) * 0.08;
+      const processIntensity = 0.4 + Math.sin(t * 15) * 0.35; // rapid flicker
       const attackIntensity = status === 'ATTACK' ? 0.3 + Math.sin(t * 6) * 0.2 : 0;
-      const emissiveIntensity = idleIntensity + sp * (speakIntensity - idleIntensity) + attackIntensity;
-      
-      clonedMat.emissive.lerp(targetEmissive, 0.1);
+
+      const emissiveIntensity = idleIntensity
+        + sp * (speakIntensity - idleIntensity)
+        + lt * (listenIntensity - idleIntensity)
+        + pt * (processIntensity - idleIntensity)
+        + attackIntensity;
+
+      // Blend emissive color: default → listen blue / process amber
+      const blendTarget = pt > 0.1 ? processEmissive : lt > 0.1 ? listenEmissive : targetEmissive;
+      clonedMat.emissive.lerp(blendTarget, 0.08);
       clonedMat.emissiveIntensity = Math.max(0, emissiveIntensity);
     }
   });
@@ -197,6 +232,7 @@ function HoloRing({
   color,
   opacity,
   isSpeaking,
+  voiceState,
   thickness = 0.02,
 }: {
   radius: number;
@@ -205,6 +241,7 @@ function HoloRing({
   color: THREE.Color;
   opacity: number;
   isSpeaking: boolean;
+  voiceState: VoiceState;
   thickness?: number;
 }) {
   const meshRef = useRef<THREE.Mesh>(null!);
@@ -222,15 +259,23 @@ function HoloRing({
     timeRef.current += delta;
     if (!meshRef.current || !materialRef.current) return;
 
-    const speed = isSpeaking ? rotationSpeed * 3 : rotationSpeed;
+    // Speed: listening=slow (attentive), processing=medium, speaking=fast
+    const speed = voiceState === 'speaking' ? rotationSpeed * 3
+      : voiceState === 'processing' ? rotationSpeed * 1.5
+      : voiceState === 'listening' ? rotationSpeed * 0.4
+      : rotationSpeed;
     meshRef.current.rotation.y += delta * speed;
 
     materialRef.current.uniforms.uTime.value = timeRef.current;
     materialRef.current.uniforms.uColor.value = color;
     materialRef.current.uniforms.uSpeed.value = isSpeaking ? 3.0 : 1.0;
-    materialRef.current.uniforms.uOpacity.value = isSpeaking
+    materialRef.current.uniforms.uOpacity.value = voiceState === 'speaking'
       ? opacity * (1.2 + Math.sin(timeRef.current * 6) * 0.3)
-      : opacity;
+      : voiceState === 'listening'
+        ? opacity * (1.1 + Math.sin(timeRef.current * 2) * 0.15)
+        : voiceState === 'processing'
+          ? opacity * (1.0 + Math.sin(timeRef.current * 10) * 0.4)
+          : opacity;
   });
 
   return (
@@ -254,11 +299,13 @@ function HoloRing({
 function ScanRing({
   isSpeaking,
   status,
+  voiceState,
   radius = 1.0,
   y = -0.6,
 }: {
   isSpeaking: boolean;
   status: string;
+  voiceState: VoiceState;
   radius?: number;
   y?: number;
 }) {
@@ -269,14 +316,21 @@ function ScanRing({
     t.current += delta;
     if (!meshRef.current) return;
 
-    meshRef.current.rotation.z += delta * (isSpeaking ? 2.0 : 0.5);
+    const rotSpeed = voiceState === 'speaking' ? 2.0
+      : voiceState === 'processing' ? 3.5
+      : voiceState === 'listening' ? 0.2
+      : 0.5;
+    meshRef.current.rotation.z += delta * rotSpeed;
 
     const mat = meshRef.current.material as THREE.MeshBasicMaterial;
-    mat.opacity = isSpeaking
+    mat.opacity = voiceState === 'speaking'
       ? 0.2 + Math.sin(t.current * 6) * 0.12
-      : 0.06 + Math.sin(t.current * 1.5) * 0.03;
+      : voiceState === 'processing'
+        ? 0.25 + Math.sin(t.current * 12) * 0.15
+        : voiceState === 'listening'
+          ? 0.1 + Math.sin(t.current * 2) * 0.04
+          : 0.06 + Math.sin(t.current * 1.5) * 0.03;
 
-    // Pulse scale when speaking
     const scale = 1 + (isSpeaking ? Math.sin(t.current * 4) * 0.05 : 0);
     meshRef.current.scale.setScalar(scale);
   });
@@ -452,11 +506,11 @@ function EnergyField({
 
 // ── Component: Adaptive Lights ───────────────────────────────────
 function AdaptiveLights({
-  isSpeaking,
   status,
+  voiceState,
 }: {
-  isSpeaking: boolean;
   status: string;
+  voiceState: VoiceState;
 }) {
   const light1Ref = useRef<THREE.PointLight>(null!);
   const light2Ref = useRef<THREE.PointLight>(null!);
@@ -470,22 +524,33 @@ function AdaptiveLights({
     const t = timeRef.current;
 
     if (light1Ref.current) {
-      light1Ref.current.intensity = isSpeaking
+      light1Ref.current.intensity = voiceState === 'speaking'
         ? 2.0 + Math.sin(t * 8) * 1.0
-        : 1.2 + Math.sin(t * 1.5) * 0.3;
+        : voiceState === 'processing'
+          ? 1.5 + Math.sin(t * 12) * 0.8
+          : voiceState === 'listening'
+            ? 0.6 + Math.sin(t * 2) * 0.2  // dim main, listening
+            : 1.2 + Math.sin(t * 1.5) * 0.3;
     }
 
     if (light2Ref.current) {
-      light2Ref.current.intensity = isSpeaking
+      // Light 2 = blue — brightens when listening (attentive glow)
+      light2Ref.current.intensity = voiceState === 'speaking'
         ? 1.5 + Math.cos(t * 6) * 0.8
-        : 0.6;
+        : voiceState === 'listening'
+          ? 1.8 + Math.cos(t * 3) * 0.5  // warm blue highlight
+          : voiceState === 'processing'
+            ? 1.2 + Math.sin(t * 10) * 0.6
+            : 0.6;
     }
 
-    // Speaking spotlight effect
+    // Light 3 = orbiting spotlight — speaking + processing
     if (light3Ref.current) {
-      light3Ref.current.intensity = isSpeaking
+      light3Ref.current.intensity = voiceState === 'speaking'
         ? 3.0 + Math.sin(t * 10) * 1.5
-        : 0;
+        : voiceState === 'processing'
+          ? 1.5 + Math.sin(t * 15) * 1.0
+          : 0;
       light3Ref.current.position.x = Math.cos(t * 2) * 1.5;
       light3Ref.current.position.z = Math.sin(t * 2) * 1.5;
     }
@@ -524,11 +589,13 @@ function AdaptiveLights({
 
 // ── Component: Audio Visualizer Bars (radial) ────────────────────
 function AudioBars({
-  isSpeaking,
   status,
+  voiceState,
+  micLevel = 0,
 }: {
-  isSpeaking: boolean;
   status: string;
+  voiceState: VoiceState;
+  micLevel: number;
 }) {
   const groupRef = useRef<THREE.Group>(null!);
   const barsRef = useRef<THREE.Mesh[]>([]);
@@ -536,6 +603,7 @@ function AudioBars({
   const barCount = 36;
 
   const color = useMemo(() => new THREE.Color(STATUS_COLORS[status] || '#00f0ff'), [status]);
+  const listenColor = useMemo(() => new THREE.Color(0x0088ff), []);
 
   useFrame((_, delta) => {
     timeRef.current += delta;
@@ -544,26 +612,39 @@ function AudioBars({
     if (!groupRef.current) return;
     groupRef.current.rotation.y += delta * 0.3;
 
+    const micNorm = Math.min(1, micLevel / 100);
+
     barsRef.current.forEach((bar, i) => {
       if (!bar) return;
       const angle = (i / barCount) * Math.PI * 2;
+      const mat = bar.material as THREE.MeshBasicMaterial;
 
-      if (isSpeaking) {
-        // Audio visualizer heights
+      if (voiceState === 'speaking') {
         const h1 = Math.abs(Math.sin(i * 0.9 + t * 9)) * 0.3;
         const h2 = Math.abs(Math.sin(i * 1.7 + t * 6)) * 0.2;
         const h3 = Math.abs(Math.sin(i * 2.3 + t * 13)) * 0.12;
         const height = (h1 + h2 + h3) * (0.7 + Math.sin(t * 3 + i * 0.2) * 0.3);
-
         bar.scale.y = 1 + height * 8;
-        const mat = bar.material as THREE.MeshBasicMaterial;
         mat.opacity = 0.5 + Math.sin(t * 7 + i * 0.4) * 0.3;
+        mat.color.lerp(color, 0.1);
+      } else if (voiceState === 'listening') {
+        // React to real mic level — bars pulse with user's voice
+        const h = micNorm * Math.abs(Math.sin(i * 0.9 + t * 8)) * 0.9;
+        bar.scale.y = 1 + h * 7;
+        mat.opacity = 0.2 + micNorm * 0.55;
+        mat.color.lerp(listenColor, 0.15);
+      } else if (voiceState === 'processing') {
+        // Rapid spinning pattern (data processing look)
+        const h = Math.abs(Math.sin(i * 1.5 + t * 16)) * 0.4;
+        bar.scale.y = 1 + h * 5;
+        mat.opacity = 0.3 + Math.sin(t * 8 + i * 0.3) * 0.2;
+        mat.color.lerp(color, 0.1);
       } else {
         // Idle gentle pulse
         const height = Math.sin(t * 1.5 + angle * 3) * 0.1 + 0.1;
         bar.scale.y = 1 + height;
-        const mat = bar.material as THREE.MeshBasicMaterial;
         mat.opacity = 0.1;
+        mat.color.lerp(color, 0.05);
       }
     });
   });
@@ -636,7 +717,8 @@ export default function EvaViewer({
   isSpeaking = false,
   status = 'SECURE',
   size = '100%',
-  responseText = '',
+  voiceState = 'idle',
+  micLevel = 0,
 }: EvaViewerProps) {
   const [isHovered, setIsHovered] = useState(false);
 
@@ -743,14 +825,14 @@ export default function EvaViewer({
         <CameraSetup />
 
         {/* Lighting */}
-        <AdaptiveLights isSpeaking={isSpeaking} status={status} />
+        <AdaptiveLights status={status} voiceState={voiceState} />
 
         {/* Environment for reflections */}
         <Environment preset="night" />
 
         <Suspense fallback={null}>
           {/* EVA 3D Model */}
-          <EvaModel isSpeaking={isSpeaking} status={status} />
+          <EvaModel status={status} voiceState={voiceState} />
 
           {/* Energy Field around model */}
           <EnergyField isSpeaking={isSpeaking} status={status} />
@@ -765,33 +847,34 @@ export default function EvaViewer({
               color={ringColor}
               opacity={ring.opacity * (isHovered ? 1.3 : 1)}
               isSpeaking={isSpeaking}
+              voiceState={voiceState}
               thickness={ring.thickness}
             />
           ))}
 
           {/* Scan Rings */}
-          <ScanRing isSpeaking={isSpeaking} status={status} radius={1.2} y={-0.5} />
-          <ScanRing isSpeaking={isSpeaking} status={status} radius={1.0} y={0.5} />
+          <ScanRing isSpeaking={isSpeaking} status={status} voiceState={voiceState} radius={1.2} y={-0.5} />
+          <ScanRing isSpeaking={isSpeaking} status={status} voiceState={voiceState} radius={1.0} y={0.5} />
 
           {/* Orbital Particles */}
           <OrbitalParticles count={100} isSpeaking={isSpeaking} status={status} />
 
           {/* Audio Visualizer Bars */}
-          <AudioBars isSpeaking={isSpeaking} status={status} />
+          <AudioBars status={status} voiceState={voiceState} micLevel={micLevel} />
 
           {/* Data Ring Text */}
           <DataRingText status={status} isSpeaking={isSpeaking} />
         </Suspense>
       </Canvas>
 
-      {/* Speaking pulse ring overlay */}
-      {isSpeaking && (
+      {/* Speaking / Listening pulse ring overlay */}
+      {(isSpeaking || voiceState === 'listening') && (
         <div
           style={{
             position: 'absolute',
             inset: 0,
             borderRadius: '50%',
-            border: `2px solid ${statusColor}`,
+            border: `2px solid ${voiceState === 'listening' ? '#0088ff' : statusColor}`,
             animation: 'eva-speak-ring 1s ease-in-out infinite',
             pointerEvents: 'none',
           }}
@@ -816,28 +899,32 @@ export default function EvaViewer({
             width: 6,
             height: 6,
             borderRadius: '50%',
-            background: statusColor,
-            boxShadow: `0 0 8px ${statusColor}`,
+            background: voiceState === 'listening' ? '#0088ff' : voiceState === 'processing' ? '#F59E0B' : statusColor,
+            boxShadow: `0 0 8px ${voiceState === 'listening' ? '#0088ff' : voiceState === 'processing' ? '#F59E0B' : statusColor}`,
             animation: status === 'ATTACK'
               ? 'pulsar-status-blink 0.5s infinite'
-              : 'pulsar-status-blink 2s infinite',
+              : voiceState === 'processing'
+                ? 'pulsar-status-blink 0.3s infinite'
+                : 'pulsar-status-blink 2s infinite',
           }}
         />
         <span
           style={{
             fontFamily: "'Orbitron', 'Courier New', monospace",
             fontSize: 9,
-            color: statusColor,
+            color: voiceState === 'listening' ? '#0088ff' : voiceState === 'processing' ? '#F59E0B' : statusColor,
             letterSpacing: 3,
             opacity: 0.7,
           }}
         >
-          {statusLabel}
+          {voiceState === 'listening' ? 'LISTENING'
+            : voiceState === 'processing' ? 'PROCESSING'
+            : statusLabel}
         </span>
       </div>
 
-      {/* Speaking label */}
-      {isSpeaking && (
+      {/* Voice state label (top) */}
+      {voiceState !== 'idle' && (
         <div
           style={{
             position: 'absolute',
@@ -846,60 +933,22 @@ export default function EvaViewer({
             transform: 'translateX(-50%)',
             fontFamily: "'Courier New', monospace",
             fontSize: 9,
-            color: statusColor,
+            color: voiceState === 'listening' ? '#0088ff'
+              : voiceState === 'processing' ? '#F59E0B'
+              : statusColor,
             letterSpacing: 4,
-            opacity: 0.7,
+            opacity: 0.8,
             animation: 'pulse-opacity 1s infinite',
             pointerEvents: 'none',
+            whiteSpace: 'nowrap',
           }}
         >
-          ◉ TRANSMITTING
+          {voiceState === 'listening' ? '◉ LISTENING...'
+            : voiceState === 'processing' ? '⟳ PROCESSING...'
+            : '◉ TRANSMITTING'}
         </div>
       )}
 
-      {/* Holographic Text Output */}
-      {isSpeaking && responseText && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: '20%',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: '80%',
-            maxWidth: '600px',
-            textAlign: 'center',
-            padding: '24px 32px',
-            background: 'linear-gradient(180deg, rgba(6,14,30,0.85) 0%, rgba(2,8,23,0.95) 100%)',
-            border: `1px solid ${statusColor}`,
-            borderRadius: '8px',
-            boxShadow: `0 0 30px rgba(0, 240, 255, 0.25), inset 0 0 20px rgba(0, 240, 255, 0.1)`,
-            fontFamily: "'Courier New', Courier, monospace",
-            color: 'var(--pulsar-text)',
-            fontSize: '15px',
-            letterSpacing: '1px',
-            lineHeight: '1.6',
-            pointerEvents: 'none',
-            zIndex: 10,
-            backdropFilter: 'blur(12px)',
-            animation: 'slide-up-fade 0.5s ease-out forwards',
-          }}
-        >
-          {/* Decorative corners */}
-          <div style={{ position: 'absolute', top: -1, left: -1, width: 10, height: 10, borderTop: `2px solid ${statusColor}`, borderLeft: `2px solid ${statusColor}` }} />
-          <div style={{ position: 'absolute', top: -1, right: -1, width: 10, height: 10, borderTop: `2px solid ${statusColor}`, borderRight: `2px solid ${statusColor}` }} />
-          <div style={{ position: 'absolute', bottom: -1, left: -1, width: 10, height: 10, borderBottom: `2px solid ${statusColor}`, borderLeft: `2px solid ${statusColor}` }} />
-          <div style={{ position: 'absolute', bottom: -1, right: -1, width: 10, height: 10, borderBottom: `2px solid ${statusColor}`, borderRight: `2px solid ${statusColor}` }} />
-
-          {/* Header */}
-          <div style={{ fontSize: '10px', color: statusColor, marginBottom: '8px', letterSpacing: '3px', fontWeight: 'bold' }}>
-            P.U.L.S.A.R. AI RESPONSE
-          </div>
-
-          <div className="typewriter-effect glow-text">
-            {responseText}
-          </div>
-        </div>
-      )}
 
       <style>{`
         @keyframes eva-speak-ring {

@@ -4,13 +4,16 @@ import {
   Mic, ShieldAlert, Cpu, Activity, Database,
   Crosshair, Radio, Zap, Globe,
   X, Download, AlertTriangle, Shield,
-  Eye, Layers, BarChart3, Wifi
+  Eye, Layers, BarChart3, Wifi, Settings
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useVoiceCommands } from './hooks/useVoiceCommands';
+import { useMediaDevices } from './hooks/useMediaDevices';
+import { usePulsarSync } from './hooks/usePulsarSync';
 import VoiceCommandHUD from './components/VoiceCommandHUD';
 import EvaViewer from './components/EvaViewer';
+import DeviceSelector from './components/DeviceSelector';
 import { askPulsarAI } from '@/lib/gemini';
 import './App.css';
 
@@ -47,13 +50,12 @@ export default function App() {
   const [inputValue, setInputValue] = useState('');
   const [isThinking, setIsThinking] = useState(false);
 
-  // System metrics
+  // System metrics - WebSocket'ten gelen gerçek veriler
+  const { data: pulsarData, isConnected: isWsConnected } = usePulsarSync();
   const [cpuUsage, setCpuUsage] = useState(12);
   const [memUsage, setMemUsage] = useState(34);
   const [networkLatency, setNetworkLatency] = useState(14);
   const [trustScore, setTrustScore] = useState(96);
-
-  // GNSS states
   const [gnssStatus, setGnssStatus] = useState<'SECURE' | 'WARNING' | 'ATTACK'>('SECURE');
   const [gnssLog, setGnssLog] = useState<string[]>(['[SYS] GNSS başlatıldı.', '[SYS] Uydu kilidi: AKTİF']);
   const [isAlarmShake, setIsAlarmShake] = useState(false);
@@ -75,6 +77,17 @@ export default function App() {
   ]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  const [headerHeight, setHeaderHeight] = useState(52);
+
+  useEffect(() => {
+    if (!headerRef.current) return;
+    const ro = new ResizeObserver(entries => {
+      setHeaderHeight(entries[0].contentRect.height);
+    });
+    ro.observe(headerRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   // ── Voice command system ───────────────────────────────────────
   const getSystemStatus = useCallback(() => {
@@ -172,6 +185,12 @@ export default function App() {
     setMessages(prev => [...prev, userMessage, jarvisMessage]);
   }, []);
 
+  // ── Audio device management ───────────────────────────────────
+  const mediaDevices = useMediaDevices();
+  const [showDeviceSelector, setShowDeviceSelector] = useState(
+    () => !localStorage.getItem('pulsar_mic_id')
+  );
+
   const voice = useVoiceCommands({
     onTriggerJammingTest: triggerJammingTest,
     onOpenXAIPanel: openXAIPanel,
@@ -180,66 +199,48 @@ export default function App() {
     getLastAlarm,
     getTrustScore,
     onEventHandled: handleVoiceEvent,
+    micDeviceId: mediaDevices.selectedMicId,
   });
 
-  // ── System stats simulation ───────────────────────────────────
+  // ── WebSocket verilerini state'lere aktar ──────────────────────
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCpuUsage(p => Math.min(100, Math.max(5, p + (Math.random() * 8 - 4))));
-      setMemUsage(p => Math.min(100, Math.max(20, p + (Math.random() * 4 - 2))));
-      setNetworkLatency(p => Math.min(200, Math.max(8, p + (Math.random() * 6 - 3))));
-    }, 2500);
-    return () => clearInterval(interval);
-  }, []);
-
-  // ── GNSS attack simulation ────────────────────────────────────
-  useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout>;
-    const triggerAnomaly = () => {
-      if (Math.random() > 0.82) {
-        setGnssStatus('WARNING');
-        setTrustScore(p => Math.max(50, p - 15));
-        setGnssLog(l => ['[WARN] Sinyal frekansı anomalisi', ...l].slice(0, 6));
-
-        setTimeout(() => {
-          if (Math.random() > 0.5) {
-            setGnssStatus('ATTACK');
-            setTrustScore(p => Math.max(20, p - 25));
-            setIsAlarmShake(true);
-            setTimeout(() => setIsAlarmShake(false), 600);
-
-            const alarm: AlarmRecord = {
-              id: Date.now().toString(),
-              type: 'spoofing',
-              severity: 'critical',
-              message: 'GNSS Spoofing saldırısı doğrulandı',
-              timestamp: new Date(),
-              details: 'Birden fazla uydudan anormal pozisyon verisi alınıyor. Konum sapması >100m.',
-              xaiExplanation: 'Pozisyon çözümü L1/L5 karşılaştırmasında tutarsızlık tespit edildi. Signal-of-Opportunity referanslarıyla doğrulandı. Saldırgan profili: Tekil kaynaklı spoofing. Tahmini güç: +5dBW.',
-            };
-            setAlarms(prev => [alarm, ...prev].slice(0, 10));
-
-            setGnssLog(l => ['[ALERT] SPOOFING TESPİT EDİLDİ!', ...l].slice(0, 6));
-            voice.speak("Uyarı efendim. GNSS Spoofing saldırısı tespit edildi. Savunma protokolleri aktif.");
-
-            setTimeout(() => {
-              setGnssStatus('SECURE');
-              setTrustScore(p => Math.min(98, p + 30));
-              setGnssLog(l => ['[SYS] Tehdit bertaraf edildi.', ...l].slice(0, 6));
-            }, 8000);
-          } else {
-            setGnssStatus('SECURE');
-            setTrustScore(p => Math.min(98, p + 10));
-            setGnssLog(l => ['[SYS] Anomali geçiciydi. Normal.', ...l].slice(0, 6));
-          }
-        }, 3000);
+    if (pulsarData) {
+      if (pulsarData.cpu_usage !== undefined) setCpuUsage(pulsarData.cpu_usage);
+      if (pulsarData.memory_usage !== undefined) setMemUsage(pulsarData.memory_usage);
+      if (pulsarData.network_latency !== undefined) setNetworkLatency(pulsarData.network_latency);
+      if (pulsarData.trust_score !== undefined) setTrustScore(pulsarData.trust_score);
+      if (pulsarData.gnss_status !== undefined) {
+        const prevStatus = gnssStatus;
+        setGnssStatus(pulsarData.gnss_status);
+        // Saldırı geçişlerinde sallantı efekti
+        if (pulsarData.gnss_status === 'ATTACK' && prevStatus !== 'ATTACK') {
+          setIsAlarmShake(true);
+          setTimeout(() => setIsAlarmShake(false), 600);
+        }
       }
-      timeout = setTimeout(triggerAnomaly, Math.random() * 20000 + 12000);
-    };
-    triggerAnomaly();
-    return () => clearTimeout(timeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    }
+  }, [pulsarData, gnssStatus]);
+
+  // ── Sistem açıldığında push-to-talk hazır ─────────────────────
+  // (Stream yönetimi artık useVoiceCommands içinde)
+  useEffect(() => {
+    if (showDeviceSelector) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const API = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!API) {
+      console.error('[PULSAR MIC] ❌ SpeechRecognition desteklenmiyor. Google Chrome kullanın.');
+    } else {
+      console.log('[PULSAR MIC] ✅ Sistem hazır. Push-to-talk aktif.');
+    }
+    return () => { voice.stopListening(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDeviceSelector]);
+
+  // ── System stats artık WebSocket'ten geliyor ───────────────────
+  // Sahte simülasyon kaldırıldı - gerçek veriler kullanılıyor
+
+  // ── GNSS attack simulation kaldırıldı ─────────────────────────
+  // Gerçek saldırı verileri WebSocket'ten geliyor
 
   // ── Auto-scroll messages ──────────────────────────────────────
   useEffect(() => {
@@ -262,7 +263,7 @@ export default function App() {
     setInputValue('');
     setIsThinking(true);
 
-    const contextStr = `Sistem Güven Skoru: ${trustScore}, GNSS Durumu: ${gnssStatus}, Ağ Gecikmesi: ${networkLatency}ms`;
+    const contextStr = `Sistem Durumu: Güven Skoru: ${trustScore}, GNSS Durumu: ${gnssStatus}, CPU: ${cpuUsage.toFixed(1)}%, Bellek: ${memUsage.toFixed(1)}%, Ağ Gecikmesi: ${networkLatency}ms, WebSocket Bağlantısı: ${isWsConnected ? 'AKTİF' : 'KAPALI'}${pulsarData?.active_attack ? `, Aktif Saldırı: ${pulsarData.active_attack}` : ''}${pulsarData?.threat_level && pulsarData.threat_level !== 'LOW' ? `, Tehdit Seviyesi: ${pulsarData.threat_level}` : ''}`;
     const responseText = await askPulsarAI(currentInput, contextStr);
 
     const jarvisMessage: Message = {
@@ -292,14 +293,18 @@ export default function App() {
 
   // ── Speaking state from voice hook ─────────────────────────────
   const isSpeaking = voice.status === 'speaking';
-  const latestJarvisMessage = useMemo(() => {
-    return messages.filter(m => m.sender === 'jarvis').pop()?.text;
-  }, [messages]);
+
+  const voiceState = useMemo(() => {
+    if (voice.isRecording) return 'listening' as const;
+    if (voice.status === 'processing') return 'processing' as const;
+    if (voice.status === 'speaking') return 'speaking' as const;
+    return 'idle' as const;
+  }, [voice.isRecording, voice.status]);
 
   return (
     <div
-      className={`h-screen w-full flex flex-col overflow-hidden scanlines relative ${isAlarmShake ? 'screen-shake' : ''}`}
-      style={{ background: 'radial-gradient(ellipse at 50% 20%, #0a1628 0%, #020817 50%, #000 100%)' }}
+      className={`flex flex-col scanlines ${isAlarmShake ? 'screen-shake' : ''}`}
+      style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden', background: 'radial-gradient(ellipse at 50% 20%, #0a1628 0%, #020817 50%, #000 100%)' }}
       role="application"
       aria-label="PULSAR GNSS Güvenlik HUD Arayüzü"
     >
@@ -309,29 +314,30 @@ export default function App() {
 
       {/* ════ HEADER ════ */}
       <header
-        className="w-full px-6 py-3 flex justify-between items-center z-10 border-b"
-        style={{ borderColor: 'var(--pulsar-border)', background: 'rgba(6,14,30,0.6)', backdropFilter: 'blur(12px)' }}
+        ref={headerRef}
+        className="w-full px-4 py-2 flex justify-between items-center border-b flex-shrink-0"
+        style={{ borderColor: 'var(--pulsar-border)', background: 'rgba(6,14,30,0.95)', backdropFilter: 'blur(12px)', position: 'relative', zIndex: 200, minHeight: 48, overflow: 'hidden' }}
         role="banner"
       >
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-0 flex-shrink-0 min-w-0">
           <h1
-            className="font-heading text-xl font-bold glow-cyan flex items-center gap-3"
-            style={{ color: 'var(--pulsar-cyan)', letterSpacing: '4px' }}
+            className="font-heading text-lg font-bold glow-cyan flex items-center gap-2"
+            style={{ color: 'var(--pulsar-cyan)', letterSpacing: '4px', whiteSpace: 'nowrap' }}
           >
-            <Zap className="w-5 h-5" aria-hidden="true" />
+            <Zap className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
             P.U.L.S.A.R
           </h1>
-          <span className="font-mono-data text-[10px]" style={{ color: 'var(--pulsar-text-dim)' }}>
-            PROTECTIVE UNIFIED LAYER FOR SIGNAL ASSURANCE & RESILIENCE // V.4.2.0
+          <span className="font-mono-data text-[9px]" style={{ color: 'var(--pulsar-text-dim)', whiteSpace: 'nowrap' }}>
+            GNSS SECURITY SYSTEM // V.4.2.0
           </span>
         </div>
 
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4 flex-shrink-0 flex-nowrap">
           {/* Trust Score Badge */}
-          <div className="flex flex-col items-end gap-0.5">
-            <span className="font-mono-data text-[10px]" style={{ color: 'var(--pulsar-text-dim)' }}>GÜVEN SKORU</span>
+          <div className="flex flex-col items-end gap-0 flex-shrink-0">
+            <span className="font-mono-data text-[9px]" style={{ color: 'var(--pulsar-text-dim)', whiteSpace: 'nowrap' }}>GÜVEN SKORU</span>
             <motion.div
-              className="font-hud text-lg font-bold"
+              className="font-hud text-base font-bold"
               style={{ color: scoreColor }}
               key={trustScore}
               initial={{ scale: 1.3, opacity: 0.5 }}
@@ -344,9 +350,9 @@ export default function App() {
           </div>
 
           {/* Score bar */}
-          <div className="flex flex-col items-end gap-1">
-            <span className="font-mono-data text-[9px]" style={{ color: scoreColor }}>{scoreLabel}</span>
-            <div className="w-24 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+            <span className="font-mono-data text-[9px]" style={{ color: scoreColor, whiteSpace: 'nowrap' }}>{scoreLabel}</span>
+            <div className="w-16 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
               <div
                 className="h-full rounded-full score-bar-fill"
                 style={{ width: `${trustScore}%`, background: scoreColor, boxShadow: `0 0 8px ${scoreColor}` }}
@@ -355,23 +361,35 @@ export default function App() {
           </div>
 
           {/* Sys status */}
-          <div className="flex flex-col items-end">
-            <span className="font-mono-data text-[10px]" style={{ color: 'var(--pulsar-text-dim)' }}>SYS</span>
+          <div className="flex flex-col items-end flex-shrink-0">
+            <span className="font-mono-data text-[9px]" style={{ color: 'var(--pulsar-text-dim)', whiteSpace: 'nowrap' }}>SYS</span>
             <span
               className="font-hud text-xs font-bold glow-cyan"
-              style={{ color: 'var(--pulsar-cyan)', animation: 'pulse-opacity 2s infinite' }}
+              style={{ color: 'var(--pulsar-cyan)', animation: 'pulse-opacity 2s infinite', whiteSpace: 'nowrap' }}
             >
               ONLINE
             </span>
           </div>
+
+          {/* Cihaz ayarları butonu */}
+          <button
+            onClick={() => setShowDeviceSelector(true)}
+            title="Ses Cihazı Ayarları"
+            style={{ background: 'transparent', border: '1px solid rgba(0,212,255,0.2)', borderRadius: 4, padding: '5px 7px', cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'rgba(0,212,255,0.5)', flexShrink: 0 }}
+            className="hud-btn"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
         </div>
       </header>
 
       {/* FULLSCREEN EVA MODEL BACKGROUND */}
       <div
-        className="absolute inset-x-0 bottom-0 z-0 pointer-events-none"
+        className="absolute inset-x-0 bottom-0 pointer-events-none"
         style={{
-          top: '80px',
+          top: headerHeight,
+          zIndex: 1,
+          isolation: 'isolate',
           opacity: xaiOpen ? 0.4 : 0.85,
           transform: xaiOpen ? 'scale(0.55) translateY(-15%)' : 'scale(1) translateY(0)',
           filter: xaiOpen ? 'blur(8px)' : 'blur(0px)',
@@ -382,16 +400,17 @@ export default function App() {
         <EvaViewer
           status={gnssStatus}
           isSpeaking={isSpeaking}
+          voiceState={voiceState}
+          micLevel={voice.micLevel}
           size="100%"
-          responseText={isSpeaking ? latestJarvisMessage : undefined}
         />
       </div>
 
       {/* ════ MAIN HUD ════ */}
-      <main className="flex-1 flex p-4 gap-4 relative z-10 overflow-hidden pointer-events-none" role="main">
+      <main className="flex-1 flex p-4 gap-4 overflow-hidden pointer-events-none" style={{ position: 'relative', zIndex: 100, minHeight: 0 }} role="main">
 
         {/* ── LEFT PANEL ── */}
-        <div className="w-[280px] flex flex-col gap-3 flex-shrink-0 pointer-events-auto">
+        <div className="w-[280px] flex flex-col gap-3 flex-shrink-0 pointer-events-auto" style={{ minHeight: 0, overflow: 'hidden' }}>
 
           {/* Core Diagnostics */}
           <div className="hud-panel p-4 flex-1 flex flex-col" role="region" aria-label="Sistem Diagnostik Paneli">
@@ -484,7 +503,7 @@ export default function App() {
             wakeWordDetected={voice.wakeWordDetected}
             permissionDenied={voice.permissionDenied}
             micAvailable={voice.micAvailable}
-            onToggle={voice.toggleListening}
+            onToggle={voice.toggleRecording}
             onSilentToggle={() => voice.setIsSilentMode(p => !p)}
           />
         </div>
@@ -493,62 +512,164 @@ export default function App() {
         <div className="flex-1 flex flex-col items-center justify-center relative pointer-events-none">
 
           {/* ── Voice Terminal ── */}
-          <div className="mt-auto w-full max-w-2xl pointer-events-auto" style={{ background: 'var(--pulsar-bg-panel)', backdropFilter: 'blur(12px)', border: '1px solid var(--pulsar-border)', borderRadius: 4, padding: '14px 18px' }}>
+          <div className="mt-auto w-full max-w-2xl pointer-events-auto" style={{ background: 'var(--pulsar-bg-panel)', backdropFilter: 'blur(12px)', border: '1px solid var(--pulsar-border)', borderRadius: 4, padding: '16px 20px' }}>
 
-            {/* Status indicator */}
-            <div className="flex items-center justify-center gap-2 mb-3 h-5">
+            {/* Cihaz bilgisi + değiştir */}
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className="font-mono-data text-[9px]" style={{ color: 'rgba(0,212,255,0.35)', letterSpacing: 2 }}>MİKROFON:</span>
+                <span className="font-mono-data text-[9px]" style={{ color: 'rgba(0,212,255,0.6)' }}>
+                  {mediaDevices.audioInputs.find(d => d.deviceId === mediaDevices.selectedMicId)?.label?.slice(0, 28) || 'Varsayılan'}
+                </span>
+              </div>
+              <button
+                onClick={() => setShowDeviceSelector(true)}
+                className="font-mono-data text-[9px]"
+                style={{ background: 'rgba(0,212,255,0.06)', border: '1px solid rgba(0,212,255,0.2)', borderRadius: 3, padding: '2px 8px', color: 'rgba(0,212,255,0.5)', cursor: 'pointer', letterSpacing: 2 }}
+              >
+                DEĞİŞTİR
+              </button>
+            </div>
+
+            {/* Durum göstergesi */}
+            <div className="flex items-center justify-center gap-2 mb-3 h-6">
               {isSpeaking ? (
                 <motion.div className="flex items-center gap-1" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                  <span className="font-mono-data text-[10px] mr-3" style={{ color: 'var(--pulsar-cyan)', letterSpacing: 3 }}>YANIT VERİYOR</span>
+                  <span className="font-mono-data text-[10px] mr-3" style={{ color: 'var(--pulsar-cyan)', letterSpacing: 3 }}>PULSAR KONUŞUYOR</span>
                   {Array.from({ length: 12 }).map((_, i) => (
-                    <motion.div
-                      key={i}
-                      className="audio-bar"
+                    <motion.div key={i} className="audio-bar"
                       animate={{ height: [4, Math.random() * 20 + 4, 4] }}
                       transition={{ duration: 0.3, repeat: Infinity, delay: i * 0.05 }}
                     />
                   ))}
                 </motion.div>
+              ) : voice.isRecording ? (
+                <motion.div className="flex items-center gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <motion.div className="w-2 h-2 rounded-full" style={{ background: 'var(--pulsar-red)' }}
+                    animate={{ opacity: [1, 0.2, 1] }} transition={{ duration: 0.8, repeat: Infinity }} />
+                  <span className="font-mono-data text-[10px]" style={{ color: 'var(--pulsar-red)', letterSpacing: 3 }}>KAYIT — KONUŞUN</span>
+                  {voice.transcript && (
+                    <span className="font-mono-data text-[10px] ml-2" style={{ color: 'rgba(0,212,255,0.6)' }}>
+                      "{voice.transcript.slice(0, 40)}{voice.transcript.length > 40 ? '…' : ''}"
+                    </span>
+                  )}
+                </motion.div>
               ) : isThinking ? (
                 <div className="flex items-center gap-3">
-                  <span className="font-mono-data text-[10px]" style={{ color: 'var(--pulsar-text-dim)', letterSpacing: 2 }}>DÜŞÜNÜYORUM</span>
+                  <span className="font-mono-data text-[10px]" style={{ color: 'var(--pulsar-text-dim)', letterSpacing: 2 }}>PULSAR DÜŞÜNÜYOR</span>
                   <div className="flex gap-1.5">
-                    <span className="thinking-dot" />
-                    <span className="thinking-dot" />
-                    <span className="thinking-dot" />
+                    <span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" />
                   </div>
                 </div>
               ) : (
                 <span className="font-mono-data text-[10px]" style={{ color: 'rgba(0,212,255,0.2)', letterSpacing: 3 }}>
-                  KOMUT BEKLENİYOR
+                  MİKROFONA BASIN, KONUŞUN, BIRAKIN
                 </span>
               )}
             </div>
 
-            {/* Input row */}
-            <div className="flex gap-3">
+            {/* VU Meter — sadece kayıt sırasında göster */}
+            <AnimatePresence>
+              {voice.isRecording && (
+                <motion.div
+                  className="mb-3"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  {/* VU Bar */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="font-mono-data text-[9px] flex-shrink-0" style={{ color: 'rgba(0,212,255,0.4)', letterSpacing: 1 }}>SES LVL</span>
+                    <div className="flex-1 flex gap-[2px] items-end h-4">
+                      {Array.from({ length: 24 }).map((_, i) => {
+                        const threshold = (i / 24) * 100;
+                        const active = voice.micLevel > threshold;
+                        const barColor = i < 16 ? 'var(--pulsar-green)' : i < 20 ? 'var(--pulsar-amber)' : 'var(--pulsar-red)';
+                        return (
+                          <div key={i} style={{ flex: 1, height: active ? '100%' : '20%', background: active ? barColor : 'rgba(255,255,255,0.06)', boxShadow: active ? `0 0 4px ${barColor}` : 'none', borderRadius: 1, transition: 'height 0.05s ease', minHeight: 2 }} />
+                        );
+                      })}
+                    </div>
+                    <span className="font-mono-data text-[9px] w-7 text-right flex-shrink-0" style={{ color: voice.micLevel > 10 ? 'var(--pulsar-green)' : 'rgba(255,255,255,0.2)' }}>
+                      {voice.micLevel}
+                    </span>
+                  </div>
+
+                  {/* Ses / Konuşma tespit durumu */}
+                  <div className="flex gap-4">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full" style={{ background: voice.soundDetected ? 'var(--pulsar-green)' : 'rgba(255,255,255,0.1)', boxShadow: voice.soundDetected ? '0 0 6px var(--pulsar-green)' : 'none' }} />
+                      <span className="font-mono-data text-[9px]" style={{ color: voice.soundDetected ? 'var(--pulsar-green)' : 'rgba(255,255,255,0.2)', letterSpacing: 1 }}>
+                        SES {voice.soundDetected ? '✓' : '—'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full" style={{ background: voice.speechDetected ? 'var(--pulsar-cyan)' : 'rgba(255,255,255,0.1)', boxShadow: voice.speechDetected ? '0 0 6px var(--pulsar-cyan)' : 'none' }} />
+                      <span className="font-mono-data text-[9px]" style={{ color: voice.speechDetected ? 'var(--pulsar-cyan)' : 'rgba(255,255,255,0.2)', letterSpacing: 1 }}>
+                        KONUŞMA {voice.speechDetected ? '✓' : '—'}
+                      </span>
+                    </div>
+                    {voice.transcript && (
+                      <div className="flex items-center gap-1.5 ml-auto">
+                        <span className="font-mono-data text-[9px]" style={{ color: 'rgba(0,212,255,0.5)', letterSpacing: 1 }}>
+                          METİN ✓
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* PTT Butonu + Yazı girişi */}
+            <div className="flex gap-3 items-center">
+
+              {/* BÜYÜK Push-to-Talk butonu */}
               <button
-                onClick={voice.toggleListening}
-                className={`voice-mic-btn ${voice.status !== 'idle' && voice.status !== 'standby' ? 'voice-mic-active' : 'voice-mic-idle'}`}
-                aria-label={voice.status !== 'idle' ? 'Ses girişini durdur' : 'Ses girişini başlat'}
-                tabIndex={0}
+                onClick={voice.toggleRecording}
+                disabled={voice.status === 'processing' || isSpeaking}
+                aria-label={voice.isRecording ? 'Kaydı durdur' : 'Konuşmaya başla'}
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: '50%',
+                  border: voice.isRecording
+                    ? '3px solid var(--pulsar-red)'
+                    : '3px solid rgba(0,212,255,0.5)',
+                  background: voice.isRecording
+                    ? 'rgba(255,51,51,0.15)'
+                    : 'rgba(0,212,255,0.08)',
+                  color: voice.isRecording ? 'var(--pulsar-red)' : 'var(--pulsar-cyan)',
+                  cursor: voice.status === 'processing' || isSpeaking ? 'not-allowed' : 'pointer',
+                  opacity: voice.status === 'processing' || isSpeaking ? 0.4 : 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  position: 'relative',
+                  boxShadow: voice.isRecording
+                    ? '0 0 20px rgba(255,51,51,0.5)'
+                    : '0 0 12px rgba(0,212,255,0.2)',
+                  transition: 'all 0.2s ease',
+                }}
               >
-                {/* Mic wave rings */}
-                {voice.status === 'listening' && (
+                {voice.isRecording && (
                   <>
                     <div className="mic-wave-ring mic-wave-ring-1" />
                     <div className="mic-wave-ring mic-wave-ring-2" />
                     <div className="mic-wave-ring mic-wave-ring-3" />
                   </>
                 )}
-                <Mic className="w-5 h-5 relative z-10" />
+                <Mic className="w-6 h-6 relative z-10" />
               </button>
 
+              {/* Yazı girişi */}
               <Input
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                placeholder={voice.status === 'listening' ? 'Ses aktarımı bekleniyor...' : 'Komut girin...'}
+                placeholder="Yazarak da konuşabilirsiniz..."
                 className="flex-1 h-10 text-sm font-mono-data"
                 style={{
                   background: 'rgba(0,0,0,0.4)',
@@ -557,7 +678,6 @@ export default function App() {
                   letterSpacing: '0.5px',
                 }}
                 aria-label="Metin komutu girişi"
-                tabIndex={0}
               />
 
               <Button
@@ -570,17 +690,23 @@ export default function App() {
                   boxShadow: '0 0 12px rgba(0,212,255,0.25)',
                   opacity: !inputValue.trim() ? 0.4 : 1,
                 }}
-                tabIndex={0}
                 aria-label="Komutu çalıştır"
               >
-                EXECUTE
+                GÖNDER
               </Button>
             </div>
+
+            {/* Mikrofon hatası uyarısı */}
+            {voice.permissionDenied && (
+              <div className="mt-3 p-2 text-center font-mono-data text-[9px]" style={{ background: 'rgba(255,51,51,0.08)', border: '1px solid rgba(255,51,51,0.3)', color: 'var(--pulsar-red)', letterSpacing: 2 }}>
+                ⚠ MİKROFON İZNİ REDDEDİLDİ — Tarayıcı adres çubuğundaki kilit ikonuna tıklayın
+              </div>
+            )}
           </div>
         </div>
 
         {/* ── RIGHT PANEL ── */}
-        <div className="w-[300px] flex flex-col gap-3 flex-shrink-0 pointer-events-auto">
+        <div className="w-[300px] flex flex-col gap-3 flex-shrink-0 pointer-events-auto" style={{ minHeight: 0, overflow: 'hidden' }}>
 
           {/* GNSS Monitor */}
           <div
@@ -897,6 +1023,27 @@ export default function App() {
           </>
         )}
       </AnimatePresence>
+
+      {/* ════ CİHAZ SEÇİM MODALI ════ */}
+      <DeviceSelector
+        open={showDeviceSelector}
+        audioInputs={mediaDevices.audioInputs}
+        audioOutputs={mediaDevices.audioOutputs}
+        selectedMicId={mediaDevices.selectedMicId}
+        selectedSpeakerId={mediaDevices.selectedSpeakerId}
+        micLevel={mediaDevices.micLevel}
+        onSelectMic={mediaDevices.selectMic}
+        onSelectSpeaker={mediaDevices.selectSpeaker}
+        startMicPreview={mediaDevices.startMicPreview}
+        stopMicPreview={mediaDevices.stopMicPreview}
+        testSpeaker={mediaDevices.testSpeaker}
+        onConfirm={(micId, speakerId) => {
+          mediaDevices.selectMic(micId);
+          mediaDevices.selectSpeaker(speakerId);
+          setShowDeviceSelector(false);
+        }}
+        onClose={() => setShowDeviceSelector(false)}
+      />
     </div>
   );
 }
